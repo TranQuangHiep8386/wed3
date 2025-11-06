@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Mini Shop SPA</title>
+<style>
+  :root{--accent:#0077cc;--muted:#666;--card:#fff;--bg:#f4f6f8}
+  body{margin:0;font-family:Inter,system-ui,Segoe UI,Roboto,"Helvetica Neue",Arial;background:var(--bg);color:#111}
+  header{background:linear-gradient(90deg,#0366d6,#0288d1);color:#fff;padding:12px 18px;display:flex;align-items:center;gap:12px}
+  header h1{margin:0;font-size:18px}
+  .container{max-width:1100px;margin:18px auto;padding:12px}
+  .layout{display:grid;grid-template-columns:260px 1fr 320px;gap:16px}
+  .card{background:var(--card);border-radius:10px;padding:12px;box-shadow:0 2px 6px rgba(20,20,30,0.05)}
+  .sidebar .search input{width:100%;padding:8px;border-radius:6px;border:1px solid #ddd}
+  .categories li{list-style:none;padding:6px 4px;cursor:pointer;border-radius:6px}
+  .categories li:hover{background:#f0f8ff}
+  .product-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .product{border-radius:8px;padding:10px;border:1px solid #eee;background:#fff;display:flex;flex-direction:column}
+  .product img{width:100%;height:160px;object-fit:cover;border-radius:6px}
+  .product h3{margin:8px 0 4px;font-size:16px}
+  .price{color:var(--accent);font-weight:600}
+  .btn{display:inline-block;padding:8px 10px;border-radius:8px;background:var(--accent);color:#fff;text-decoration:none;cursor:pointer}
+  .btn.secondary{background:#eee;color:#333}
+  .cart-list{max-height:420px;overflow:auto}
+  .cart-row{display:flex;gap:8px;align-items:center;padding:8px;border-bottom:1px solid #f1f1f1}
+  footer{padding:12px;text-align:center;color:var(--muted)}
+  .top-actions{margin-left:auto;display:flex;gap:8px;align-items:center}
+  @media (max-width:1000px){.layout{grid-template-columns:1fr;}.product-grid{grid-template-columns:repeat(2,1fr)}.top-actions{display:block;margin-top:8px}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Mini Shop</h1>
+  <div class="top-actions" id="topActions">
+    <!-- login state will render here -->
+  </div>
+</header>
+
+<main class="container">
+  <div class="layout">
+    <!-- LEFT SIDEBAR -->
+    <aside class="sidebar card">
+      <div class="search">
+        <input id="searchInput" placeholder="Tìm sản phẩm..." />
+        <div style="margin-top:8px">
+          <button class="btn" id="searchBtn">Tìm</button>
+        </div>
+      </div>
+
+      <hr style="margin:12px 0" />
+
+      <div>
+        <h4>Danh mục</h4>
+        <ul class="categories" id="categoriesList"></ul>
+      </div>
+
+      <hr style="margin:12px 0" />
+
+      <div>
+        <h4>Sản phẩm nổi bật</h4>
+        <div id="popularList"></div>
+      </div>
+    </aside>
+
+    <!-- MAIN -->
+    <section>
+      <div class="card" style="margin-bottom:12px;display:flex;align-items:center;gap:14px">
+        <div>
+          <strong id="viewTitle">Tất cả sản phẩm</strong>
+          <div style="color:var(--muted);font-size:13px" id="viewSubtitle">Danh sách sản phẩm</div>
+        </div>
+        <div style="margin-left:auto">
+          <select id="sortSelect">
+            <option value="">Sắp xếp</option>
+            <option value="price_asc">Giá ↑</option>
+            <option value="price_desc">Giá ↓</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="productsContainer" class="product-grid"></div>
+    </section>
+
+    <!-- RIGHT: CART & ADMIN -->
+    <aside class="card">
+      <h3>Giỏ hàng</h3>
+      <div class="cart-list" id="cartList"></div>
+      <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center">
+        <div>Tổng:</div>
+        <div id="cartTotal" style="font-weight:700">0₫</div>
+      </div>
+      <div style="margin-top:8px;display:flex;gap:8px">
+        <button class="btn" id="checkoutBtn">Đặt hàng</button>
+        <button class="btn secondary" id="clearCartBtn">Xóa giỏ</button>
+      </div>
+
+      <hr style="margin:12px 0" />
+      <div id="adminPanel" style="display:none">
+        <h4>Admin</h4>
+        <button class="btn" id="adminOrdersBtn">Xem đơn hàng</button>
+        <div id="adminOutput" style="margin-top:8px"></div>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer>
+  &copy; Mini Shop — demo
+</footer>
+
+<script>
+/*
+  Single-file SPA front-end
+  - Adjust BASE_URL to your Node-RED host/port
+  - Uses fetch with credentials: 'include' so server can set cookie
+*/
+const BASE_URL = '/api'; // <-- thay đổi nếu cần
+
+// Simple helpers
+const $ = sel => document.querySelector(sel);
+const fmtCurrency = v => (typeof v === 'number' ? v.toLocaleString('vi-VN') + '₫' : v);
+
+// App state (cart stored in localStorage keyed by 'mini_cart' + session)
+let state = {
+  user: null,
+  products: [],
+  categories: [],
+  cart: loadCart()
+};
+
+// --------- DOM refs ----------
+const categoriesList = $('#categoriesList');
+const productsContainer = $('#productsContainer');
+const popularList = $('#popularList');
+const cartList = $('#cartList');
+const cartTotal = $('#cartTotal');
+const viewTitle = $('#viewTitle');
+const viewSubtitle = $('#viewSubtitle');
+const topActions = $('#topActions');
+const searchInput = $('#searchInput');
+
+// --------- Init ----------
+init();
+
+function init(){
+  renderTopActions();
+  bindUI();
+  fetchCategories();
+  fetchProducts();
+  fetchPopular();
+  renderCart();
+  checkAdmin();
+}
+
+// --------- UI binds ----------
+function bindUI(){
+  $('#searchBtn').addEventListener('click', () => doSearch(searchInput.value.trim()));
+  $('#checkoutBtn').addEventListener('click', checkout);
+  $('#clearCartBtn').addEventListener('click', () => { state.cart=[]; saveCart(); renderCart(); });
+  $('#sortSelect').addEventListener('change', e=> {
+    sortProducts(e.target.value);
+  });
+  $('#adminOrdersBtn')?.addEventListener('click', loadAdminOrders);
+}
+
+// --------- Cart persistence ----------
+function cartKey(){
+  // allow per-session by reading cookie named 'mini_sid' or fallback to 'anon'
+  const sid = getCookie('mini_sid') || 'anon';
+  return 'mini_cart_' + sid;
+}
+function loadCart(){
+  try {
+    const raw = localStorage.getItem(cartKey()) || '[]';
+    return JSON.parse(raw);
+  } catch(e){ return []; }
+}
+function saveCart(){
+  localStorage.setItem(cartKey(), JSON.stringify(state.cart));
+}
+
+// --------- Cookies helper
+function setCookie(name, value, days=7){
+  const d = new Date(); d.setTime(d.getTime() + days*24*60*60*1000);
+  document.cookie = `${name}=${encodeURIComponent(value)}; expires=${d.toUTCString()}; path=/;`;
+}
+function getCookie(name){
+  const m = document.cookie.match(new RegExp('(^| )'+name+'=([^;]+)'));
+  return m ? decodeURIComponent(m[2]) : null;
+}
+function deleteCookie(name){
+  document.cookie = name + "=; Max-Age=-99999999; path=/;";
+}
+
+// --------- Top actions (login / user) ----------
+function renderTopActions(){
+  topActions.innerHTML = '';
+  if(state.user){
+    const el = document.createElement('div');
+    el.style.display='flex'; el.style.gap='8px'; el.style.alignItems='center';
+    el.innerHTML = `<div style="color:#fff">Xin chào, ${escapeHtml(state.user.username)}</div>
+      <button class="btn secondary" id="logoutBtn">Logout</button>`;
+    topActions.appendChild(el);
+    $('#logoutBtn').addEventListener('click', logout);
+  } else {
+    const loginBtn = document.createElement('button');
+    loginBtn.className='btn'; loginBtn.textContent='Login';
+    const signupBtn = document.createElement('button'); signupBtn.className='btn secondary'; signupBtn.textContent='Register';
+    topActions.appendChild(loginBtn); topActions.appendChild(signupBtn);
+    loginBtn.addEventListener('click', showLoginModal);
+    signupBtn.addEventListener('click', showRegisterModal);
+  }
+}
+
+// minimal modal created on demand
+function showLoginModal(){
+  const modal = createModal('Đăng nhập', loginContent());
+  document.body.appendChild(modal);
+  modal.querySelector('form').addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const username = fd.get('username'); const password = fd.get('password');
+    const res = await apiPost('/api/login', { username, password });
+    if(res && res.success){
+      state.user = res.user;
+      // if server returns session id token in res.session -> set cookie
+      if(res.session) setCookie('mini_sid', res.session, 7);
+      renderTopActions(); renderCart();
+      modal.remove();
+    } else {
+      alert('Login failed: ' + (res && res.message ? res.message : 'Sai thông tin'));
+    }
+  });
+}
+function showRegisterModal(){
+  const modal = createModal('Đăng ký', registerContent());
+  document.body.appendChild(modal);
+  modal.querySelector('form').addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const username = fd.get('username'); const password = fd.get('password'); const email = fd.get('email');
+    const res = await apiPost('/api/register', { username, password, email });
+    if(res && res.success){ alert('Đăng ký thành công. Bạn có thể đăng nhập.'); modal.remove(); }
+    else alert('Đăng ký lỗi: ' + (res && res.message ? res.message : 'Lỗi'));
+  });
+}
+function logout(){
+  // call backend logout if exists
+  apiPost('/api/logout', {}).finally(()=>{
+    state.user = null;
+    deleteCookie('mini_sid');
+    renderTopActions();
+  });
+}
+
+// --- modal builders ---
+function createModal(title, innerHtml){
+  const wrap = document.createElement('div');
+  wrap.style.position='fixed'; wrap.style.left=0; wrap.style.top=0; wrap.style.right=0; wrap.style.bottom=0;
+  wrap.style.background='rgba(0,0,0,0.4)'; wrap.style.display='flex'; wrap.style.alignItems='center'; wrap.style.justifyContent='center';
+  const box = document.createElement('div'); box.className='card'; box.style.width='420px'; box.style.maxWidth='95%';
+  box.innerHTML = `<h3 style="margin-top:0">${title}</h3>` + innerHtml + `<div style="text-align:right;margin-top:8px"><button class="btn secondary" id="modalClose">Close</button></div>`;
+  wrap.appendChild(box);
+  wrap.querySelector('#modalClose').addEventListener('click', ()=>wrap.remove());
+  return wrap;
+}
+function loginContent(){ return `<form><label>Username</label><input name="username" required style="width:100%;padding:8px;margin:6px 0"/><label>Password</label><input name="password" type="password" required style="width:100%;padding:8px;margin:6px 0"/><div style="text-align:right"><button class="btn" type="submit">Login</button></div></form>`; }
+function registerContent(){ return `<form><label>Username</label><input name="username" required style="width:100%;padding:8px;margin:6px 0"/><label>Email</label><input name="email" type="email" style="width:100%;padding:8px;margin:6px 0"/><label>Password</label><input name="password" type="password" required style="width:100%;padding:8px;margin:6px 0"/><div style="text-align:right"><button class="btn" type="submit">Register</button></div></form>`; }
+
+// --------- API helpers ----------
+async function apiGet(path){
+  try {
+    const res = await fetch(BASE_URL + path, { credentials:'include' });
+    return await res.json();
+  } catch(e){ console.error(e); return null; }
+}
+async function apiPost(path, body){
+  try {
+    const res = await fetch(BASE_URL + path, {
+      method:'POST',
+      credentials:'include',
+      headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify(body)
+    });
+    return await res.json();
+  } catch(e){ console.error(e); return null; }
+}
+
+// --------- Fetch & render data ----------
+async function fetchCategories(){
+  const data = await apiGet('/api/categories') || [];
+  state.categories = data;
+  renderCategories();
+}
+function renderCategories(){
+  categoriesList.innerHTML = `<li style="font-weight:600;cursor:pointer" data-id="">Tất cả</li>`;
+  state.categories.forEach(c=>{
+    const li = document.createElement('li');
+    li.textContent = c.name; li.dataset.id = c.id;
+    li.addEventListener('click', ()=> { loadProductsByCategory(c.id, c.name); });
+    categoriesList.appendChild(li);
+  });
+  categoriesList.querySelector('li').addEventListener('click', ()=>fetchProducts());
+}
+
+async function fetchProducts(){
+  viewTitle.textContent='Tất cả sản phẩm'; viewSubtitle.textContent='Danh sách sản phẩm';
+  const data = await apiGet('/api/products') || [];
+  state.products = data;
+  renderProducts(state.products);
+}
+async function fetchPopular(){
+  const data = await apiGet('/api/products/popular') || [];
+  popularList.innerHTML = data.map(p=>`<div style="padding:6px 0;border-bottom:1px solid #f1f1f1"><strong>${escapeHtml(p.name)}</strong><div style="color:var(--muted)">${fmtCurrency(p.price)}</div></div>`).join('');
+}
+async function loadProductsByCategory(id, name){
+  viewTitle.textContent = name; viewSubtitle.textContent = 'Sản phẩm theo nhóm';
+  const data = await apiGet(`/api/categories/${id}/products`) || [];
+  state.products = data;
+  renderProducts(data);
+}
+async function doSearch(q){
+  if(!q) return fetchProducts();
+  viewTitle.textContent='Kết quả tìm kiếm'; viewSubtitle.textContent=`"${q}"`;
+  const data = await apiGet('/api/search?q=' + encodeURIComponent(q)) || [];
+  state.products = data;
+  renderProducts(data);
+}
+function sortProducts(mode){
+  let arr = [...state.products];
+  if(mode === 'price_asc') arr.sort((a,b)=>a.price-b.price);
+  else if(mode === 'price_desc') arr.sort((a,b)=>b.price-a.price);
+  renderProducts(arr);
+}
+
+function renderProducts(list){
+  productsContainer.innerHTML = '';
+  if(!list || list.length===0){ productsContainer.innerHTML = '<div class="card">Không có sản phẩm</div>'; return; }
+  list.forEach(p => {
+    const div = document.createElement('div'); div.className='product';
+    div.innerHTML = `
+      <img src="${p.image}" alt="${p.name}" style="max-height:200px">
+      <h3>${escapeHtml(p.name)}</h3>
+      <div style="flex:1;color:var(--muted);font-size:13px">${escapeHtml((p.description||'').slice(0,120))}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
+        <div class="price">${fmtCurrency(p.price)}</div>
+        <div>
+          <input type="number" min="1" value="1" style="width:64px;padding:6px;border-radius:6px;border:1px solid #ddd" data-prod="${p.id}" />
+          <button class="btn" data-add="${p.id}">Thêm</button>
+        </div>
+      </div>
+    `;
+    productsContainer.appendChild(div);
+    div.querySelector('[data-add]').addEventListener('click', e=>{
+      const pid = p.id;
+      const qty = parseInt(div.querySelector('input').value || 1);
+      addToCart(pid, qty, p.price);
+    });
+  });
+}
+
+// --------- Cart logic ----------
+function addToCart(product_id, qty, price_at_added){
+  const existing = state.cart.find(x=>x.product_id===product_id);
+  if(existing){ existing.qty += qty; }
+  else { state.cart.push({ product_id, qty, price_at_added }); }
+  saveCart(); renderCart();
+  // optional: call backend to persist cart
+  apiPost('/api/cart/add', { product_id, qty }).catch(()=>{});
+}
+function renderCart(){
+  cartList.innerHTML = '';
+  if(state.cart.length===0){ cartList.innerHTML = '<div style="color:var(--muted)">Giỏ hàng trống</div>'; cartTotal.textContent='0₫'; return; }
+  let total=0;
+  state.cart.forEach((it, i)=>{
+    const prod = state.products.find(p=>p.id==it.product_id) || {};
+    const row = document.createElement('div'); row.className='cart-row';
+    row.innerHTML = `<div style="flex:1"><strong>${escapeHtml(prod.name||'Sản phẩm')}</strong><div style="color:var(--muted);font-size:13px">${fmtCurrency(it.price_at_added)}</div></div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end">
+        <input type="number" min="1" value="${it.qty}" style="width:72px;padding:6px;border-radius:6px;border:1px solid #ddd" data-idx="${i}" />
+        <button class="btn secondary" data-remove="${i}" style="margin-top:6px">Xóa</button>
+      </div>`;
+    cartList.appendChild(row);
+    total += (it.qty * Number(it.price_at_added));
+    row.querySelector('input').addEventListener('change', e=>{
+      const v = parseInt(e.target.value) || 1; state.cart[i].qty = v; saveCart(); renderCart();
+    });
+    row.querySelector('[data-remove]').addEventListener('click', ()=>{ state.cart.splice(i,1); saveCart(); renderCart(); });
+  });
+  cartTotal.textContent = fmtCurrency(total);
+}
+
+// --------- Checkout ----------
+async function checkout(){
+  if(state.cart.length===0){ alert('Giỏ hàng trống'); return; }
+  // require login
+  if(!state.user){
+    if(!confirm('Bạn cần đăng nhập để đặt hàng. Đăng nhập bây giờ?')) return;
+    showLoginModal(); return;
+  }
+  // collect shipping info
+  const html = `<form id="checkoutForm">
+    <label>Người nhận</label><input name="name" required style="width:100%;padding:8px"/><label>Số điện thoại</label><input name="phone" required style="width:100%;padding:8px"/><label>Địa chỉ</label><textarea name="address" required style="width:100%;padding:8px"></textarea>
+    <div style="text-align:right;margin-top:8px"><button class="btn" type="submit">Xác nhận đặt hàng</button></div>
+  </form>`;
+  const modal = createModal('Thanh toán', html); document.body.appendChild(modal);
+  modal.querySelector('#checkoutForm').addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const shipping = { name: fd.get('name'), phone: fd.get('phone'), address: fd.get('address') };
+    const orderPayload = { shipping, items: state.cart, user_id: state.user.id };
+    const res = await apiPost('/api/order', orderPayload);
+    if(res && res.success){
+      alert('Đặt hàng thành công: ' + (res.order_code || res.order_id || 'OK'));
+      state.cart = []; saveCart(); renderCart(); modal.remove();
+    } else {
+      alert('Đặt hàng lỗi: ' + (res && res.message ? res.message : 'Lỗi server'));
+    }
+  });
+}
+
+// --------- Admin (very small) ----------
+function checkAdmin(){
+  // if logged in and role is admin -> show admin panel
+  if(state.user && state.user.role === 'admin') $('#adminPanel').style.display = 'block';
+}
+async function loadAdminOrders(){
+  const rows = await apiGet('/api/admin/orders') || [];
+  $('#adminOutput').innerHTML = rows.length ? rows.map(o=>`<div class="card" style="padding:8px;margin-bottom:8px"><b>${escapeHtml(o.order_code||('ID '+o.id))}</b><div>${escapeHtml(o.shipping_address||'')}</div><div style="color:var(--muted)">${escapeHtml(o.status)}</div></div>`).join('') : '<div>Không có đơn</div>';
+}
+
+// --------- utilities ----------
+function escapeHtml(s){ if(!s && s!==0) return ''; return String(s).replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]); }
+
+</script>
+
+</body>
+</html>

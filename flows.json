@@ -1,0 +1,18 @@
+[
+    {
+        "id": "prod_func",
+        "type": "function",
+        "z": "tab_minishop",
+        "name": "Select products",
+        "func": "msg.topic = \"SELECT p.id, p.name, p.description, p.price, p.image_url, p.category_id, c.name AS category FROM products p LEFT JOIN categories c ON p.category_id=c.id ORDER BY p.id DESC\";\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 420,
+        "y": 480,
+        "wires": [
+            [
+                "25427adb9b3c2934"
+            ]
+        ]
+    }
+]
